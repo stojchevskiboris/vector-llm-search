@@ -8,12 +8,16 @@ public class Service
 {
     public static async Task GenerateAndSaveEmbeddings(AppDbContext db)
     {
-        await using var generator = await LocalEmbeddingGenerator.CreateAsync();
         var films = db.Films.Where(f => f.embeddings == null).ToList();
 
         if (!films.Any()) return;
 
-        Console.WriteLine($"\n[INFO] {films.Count} movies pending embedding...");
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine($"\n📦 FOUND {films.Count} MOVIES WITHOUT EMBEDDINGS.");
+        Console.WriteLine("⚙️  Initializing AI Engine...");
+        Console.ResetColor();
+
+        await using var generator = await LocalEmbeddingGenerator.CreateAsync();
 
         for (int i = 0; i < films.Count; i++)
         {
@@ -21,16 +25,22 @@ public class Service
             var embedding = await generator.GenerateEmbeddingAsync($"{film.title}: {film.description}");
             film.embeddings = MemoryMarshal.AsBytes(embedding.Vector.Span).ToArray();
 
-            Console.Write($"\r[PROCESS] {i + 1}/{films.Count} - {film.title.PadRight(30)}");
+            double progress = (double)(i + 1) / films.Count;
+            Console.Write($"\r🧠 Processing: [{new string('█', (int)(progress * 20)).PadRight(20, '░')}] {progress:P0} | {film.title.PadRight(30)}");
         }
 
         await db.SaveChangesAsync();
-        Console.WriteLine("\n[SUCCESS] All embeddings saved.\n");
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine("\n✅ SUCCESS: All embeddings generated and synchronized with database.\n");
+        Console.ResetColor();
     }
 
     public static async Task SearchFilms(AppDbContext db, string query)
     {
-        Console.WriteLine($"\nSearching for: \"{query}\"...");
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"\n🚀 Deep diving for: \"{query}\"...");
+        Console.ResetColor();
+
         await using var generator = await LocalEmbeddingGenerator.CreateAsync();
 
         var queryEmbedding = await generator.GenerateEmbeddingAsync(query);
@@ -38,31 +48,80 @@ public class Service
 
         var films = db.Films.Where(f => f.embeddings != null).ToList();
 
-        var allScores = films.Select(f => new {
-            f.title,
-            f.description,
+        var allResults = films.Select(f => new {
+            Film = f,
             Score = TensorPrimitives.CosineSimilarity(queryVector, MemoryMarshal.Cast<byte, float>(f.embeddings!).ToArray())
-        }).ToList();
+        })
+        .OrderByDescending(r => r.Score)
+        .Take(5)
+        .ToList();
 
-        float maxScore = allScores.Any() ? allScores.Max(s => s.Score) : 1.0f;
-
-        var results = allScores.OrderByDescending(r => r.Score).Take(5);
-
-        Console.WriteLine("\n" + new string('-', 45));
-        Console.WriteLine($"{"SCORE",-10} | {"TITLE"}");
-        Console.WriteLine(new string('-', 45));
-
-        foreach (var res in results)
+        if (!allResults.Any())
         {
-            float normalized = res.Score / maxScore;
-
-            Console.ForegroundColor = normalized > 0.95 ? ConsoleColor.Green :
-                                      normalized > 0.85 ? ConsoleColor.Yellow :
-                                                          ConsoleColor.DarkGray;
-
-            Console.WriteLine($"{res.Score} | {res.title} => {res.description}");
+            Console.WriteLine("❌ No matches found.");
+            return;
         }
+
+        while (true)
+        {
+            Console.WriteLine("\n" + new string('═', 60));
+            Console.WriteLine($" {"#",-3} | {"MATCH",-8} | {"MOVIE TITLE"}");
+            Console.WriteLine(new string('─', 60));
+
+            for (int i = 0; i < allResults.Count; i++)
+            {
+                var res = allResults[i];
+                Console.ForegroundColor = i == 0 ? ConsoleColor.Green : ConsoleColor.White;
+                Console.WriteLine($" [{i + 1}] | {res.Score:P1}  | {res.Film.title}");
+            }
+            Console.ResetColor();
+            Console.WriteLine(new string('═', 60));
+
+            Console.Write("\n💡 Select a number for details, or press Enter to go back: ");
+            string? input = Console.ReadLine();
+
+            if (string.IsNullOrWhiteSpace(input)) break;
+
+            if (int.TryParse(input, out int index) && index >= 1 && index <= allResults.Count)
+            {
+                DisplayFilmDetails(allResults[index - 1].Film);
+            }
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("⚠️ Invalid selection.");
+                Console.ResetColor();
+            }
+        }
+    }
+
+    private static void DisplayFilmDetails(Film film)
+    {
+        Console.Clear();
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine("\n" + new string('█', 60));
+        Console.WriteLine($"  {film.title.ToUpper()} ({film.release_year ?? "N/A"})");
+        Console.WriteLine(new string('█', 60));
         Console.ResetColor();
-        Console.WriteLine(new string('-', 45) + "\n");
+
+        Console.WriteLine($"\n⭐ Rating: {film.rating ?? "N/A"}  |  🕒 Length: {film.length} min");
+        Console.WriteLine($"💰 Rental: ${film.rental_rate}  |  🔄 Replacement: ${film.replacement_cost}");
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("\n📖 PLOT SUMMARY:");
+        Console.ResetColor();
+        Console.WriteLine(film.description ?? "No description available.");
+
+        if (!string.IsNullOrEmpty(film.special_features))
+        {
+            Console.ForegroundColor = ConsoleColor.Magenta;
+            Console.WriteLine("\n✨ SPECIAL FEATURES:");
+            Console.ResetColor();
+            Console.WriteLine(film.special_features);
+        }
+
+        Console.WriteLine("\n" + new string('─', 60));
+        Console.WriteLine("Press any key to return to search results...");
+        Console.ReadKey(true);
     }
 }

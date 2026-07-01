@@ -1,0 +1,12 @@
+# Build directories
+bin/
+obj/
+
+# Local configuration (keeps credentials safe!)
+appsettings.json
+appsettings.*.json
+
+# User-specific files
+.vs/
+*.user
+*.suo
